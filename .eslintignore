@@ -1,0 +1,23 @@
+# Build output
+lib/
+dist/
+build/
+
+# Test coverage
+coverage/
+
+# Config files
+.eslintrc.js
+jest.config.js
+
+# Scripts
+scripts/
+
+# Test files
+test/
+
+# Dependencies
+node_modules/
+
+# Logs
+*.log

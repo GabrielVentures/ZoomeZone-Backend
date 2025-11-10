@@ -21,7 +21,6 @@ export const resetDailyQuotas = functions.pubsub
     const startTime = Date.now();
 
     try {
-      const batch = admin.firestore().batch();
       const now = admin.firestore.FieldValue.serverTimestamp();
 
       // ==================== 1. Reset All User Quotas ====================
@@ -35,17 +34,31 @@ export const resetDailyQuotas = functions.pubsub
 
       console.log(`👥 [ResetQuotas] Found ${usersSnapshot.size} users to reset`);
 
-      usersSnapshot.forEach((doc) => {
-        batch.update(doc.ref, {
-          "ai_quota.today_usage.request_count": 0,
-          "ai_quota.today_usage.total_tokens": 0,
-          "ai_quota.today_usage.cost_usd": 0,
-          "ai_quota.today_usage.last_reset_at": now,
-          "ai_quota.rate_limit.recent_requests": [],
-        });
-      });
+      // Batch in chunks of 500 to respect Firestore batch limit
+      const BATCH_SIZE = 500;
+      const userDocs = usersSnapshot.docs;
+      let totalUpdated = 0;
 
-      console.log(`✅ [ResetQuotas] Prepared ${usersSnapshot.size} user updates`);
+      for (let i = 0; i < userDocs.length; i += BATCH_SIZE) {
+        const batch = admin.firestore().batch();
+        const chunk = userDocs.slice(i, i + BATCH_SIZE);
+
+        chunk.forEach((doc) => {
+          batch.update(doc.ref, {
+            "ai_quota.today_usage.request_count": 0,
+            "ai_quota.today_usage.total_tokens": 0,
+            "ai_quota.today_usage.cost_usd": 0,
+            "ai_quota.today_usage.last_reset_at": now,
+            "ai_quota.rate_limit.recent_requests": [],
+          });
+        });
+
+        await batch.commit();
+        totalUpdated += chunk.length;
+        console.log(`✅ [ResetQuotas] Batch ${Math.floor(i / BATCH_SIZE) + 1} committed (${chunk.length} users)`);
+      }
+
+      console.log(`✅ [ResetQuotas] Total ${totalUpdated} users updated`);
 
       // ==================== 2. Reset Global Statistics ====================
 
@@ -59,7 +72,7 @@ export const resetDailyQuotas = functions.pubsub
       const globalDoc = await globalConfigRef.get();
       const currentStats = globalDoc.data()?.today_stats || {};
 
-      console.log(`📈 [ResetQuotas] Today's stats before reset:`, {
+      console.log("📈 [ResetQuotas] Today's stats before reset:", {
         requests: currentStats.total_requests || 0,
         tokens: currentStats.total_tokens || 0,
         cost_usd: (currentStats.total_cost_usd || 0).toFixed(2),
@@ -67,33 +80,29 @@ export const resetDailyQuotas = functions.pubsub
         quota_exceeded: currentStats.quota_exceeded_count || 0,
       });
 
-      batch.update(globalConfigRef, {
+      // Reset cost alert triggered flags (properly delete triggered_at field)
+      const costAlerts = globalDoc.data()?.cost_alerts || [];
+      const resetAlerts = costAlerts.map((alert: any) => {
+        const { triggered_at, ...rest } = alert;
+        return { ...rest, triggered: false };
+      });
+
+      // Create separate batch for global config updates
+      const globalBatch = admin.firestore().batch();
+
+      globalBatch.update(globalConfigRef, {
         "today_stats.total_requests": 0,
         "today_stats.total_tokens": 0,
         "today_stats.total_cost_usd": 0,
         "today_stats.failed_requests": 0,
         "today_stats.quota_exceeded_count": 0,
         "today_stats.last_reset_at": now,
+        "cost_alerts": resetAlerts,
       });
 
-      // Reset cost alert triggered flags
-      const costAlerts = globalDoc.data()?.cost_alerts || [];
-      const resetAlerts = costAlerts.map((alert: any) => ({
-        ...alert,
-        triggered: false,
-        triggered_at: null,
-      }));
-
-      batch.update(globalConfigRef, {
-        cost_alerts: resetAlerts,
-      });
-
-      console.log("✅ [ResetQuotas] Prepared global statistics reset");
-
-      // ==================== 3. Commit All Changes ====================
-
-      console.log("💾 [ResetQuotas] Committing batch write...");
-      await batch.commit();
+      console.log("💾 [ResetQuotas] Committing global statistics reset...");
+      await globalBatch.commit();
+      console.log("✅ [ResetQuotas] Global statistics reset completed");
 
       // ==================== 4. Log Reset Event ====================
 
@@ -113,9 +122,9 @@ export const resetDailyQuotas = functions.pubsub
       });
 
       const duration = Date.now() - startTime;
-      console.log(`✅ [ResetQuotas] Daily quota reset completed successfully`);
+      console.log("✅ [ResetQuotas] Daily quota reset completed successfully");
       console.log(`⏱️  [ResetQuotas] Execution time: ${duration}ms`);
-      console.log(`📊 [ResetQuotas] Summary:`, {
+      console.log("📊 [ResetQuotas] Summary:", {
         users_reset: usersSnapshot.size,
         previous_requests: currentStats.total_requests || 0,
         previous_cost_usd: (currentStats.total_cost_usd || 0).toFixed(2),

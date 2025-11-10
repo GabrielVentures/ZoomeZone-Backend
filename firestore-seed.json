@@ -1,0 +1,84 @@
+{
+  "settings": {
+    "ai_global_config": {
+      "global_limits": {
+        "daily_cost_limit_usd": 100,
+        "daily_request_limit": 20000,
+        "circuit_breaker_enabled": false,
+        "circuit_breaker_reason": null
+      },
+      "today_stats": {
+        "total_requests": 0,
+        "total_tokens": 0,
+        "total_cost_usd": 0,
+        "failed_requests": 0,
+        "quota_exceeded_count": 0,
+        "last_reset_at": {
+          "__datatype__": "timestamp",
+          "value": {
+            "_seconds": 0,
+            "_nanoseconds": 0
+          }
+        }
+      },
+      "cost_alerts": [
+        {
+          "threshold_usd": 50,
+          "email": "admin@example.com",
+          "triggered": false
+        },
+        {
+          "threshold_usd": 80,
+          "email": "admin@example.com",
+          "triggered": false
+        },
+        {
+          "threshold_usd": 95,
+          "email": "admin@example.com",
+          "triggered": false
+        }
+      ],
+      "default_user_quota": {
+        "daily_cost_limit_usd": 10,
+        "daily_request_limit": 2000,
+        "enabled": true
+      }
+    }
+  },
+  "users": {
+    "kqliapfmqJaZfUj0MChfUXEIwyj1": {
+      "uid": "kqliapfmqJaZfUj0MChfUXEIwyj1",
+      "email": "sunkaifengdiyi@163.com",
+      "role": "admin",
+      "createdAt": {
+        "__datatype__": "timestamp",
+        "value": {
+          "_seconds": 0,
+          "_nanoseconds": 0
+        }
+      },
+      "ai_quota": {
+        "daily_cost_limit_usd": 100,
+        "daily_request_limit": 10000,
+        "enabled": true,
+        "today_usage": {
+          "request_count": 0,
+          "total_tokens": 0,
+          "cost_usd": 0,
+          "last_reset_at": {
+            "__datatype__": "timestamp",
+            "value": {
+              "_seconds": 0,
+              "_nanoseconds": 0
+            }
+          }
+        },
+        "rate_limit": {
+          "per_minute": 50,
+          "per_hour": 500,
+          "recent_requests": []
+        }
+      }
+    }
+  }
+}

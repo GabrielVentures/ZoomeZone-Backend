@@ -20,8 +20,9 @@ export {
   updateGlobalAIConfig,
 } from "./quota-functions";
 
-// Export AI Processing Function
+// Export AI Processing Functions
 export { processImageUpload } from "./ai-processor";
+export { processNewScanRecord } from "./firestore-ai-processor";
 
 // Export Scheduled Tasks
 export {
@@ -29,3 +30,6 @@ export {
   sendDailyCostReport,
   checkCostAlerts,
 } from "./scheduled-tasks";
+
+// Export Audit Log Functions
+export { getAuditLogs, logActivity } from "./audit-functions";

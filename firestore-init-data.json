@@ -1,0 +1,115 @@
+{
+  "instructions": "由于组织策略限制无法创建 service account key，请按照以下步骤在 Firebase Console 中手动创建 Firestore 数据",
+  "steps": [
+    {
+      "step": 1,
+      "description": "访问 Firebase Console Firestore",
+      "url": "https://console.firebase.google.com/project/zoom-zone-6619c/firestore"
+    },
+    {
+      "step": 2,
+      "description": "创建 settings collection，添加 ai_global_config 文档",
+      "collection": "settings",
+      "document_id": "ai_global_config",
+      "data": {
+        "global_limits": {
+          "daily_cost_limit_usd": 100,
+          "daily_request_limit": 20000,
+          "circuit_breaker_enabled": false,
+          "circuit_breaker_reason": null
+        },
+        "today_stats": {
+          "total_requests": 0,
+          "total_tokens": 0,
+          "total_cost_usd": 0,
+          "failed_requests": 0,
+          "quota_exceeded_count": 0,
+          "last_reset_at": "Timestamp (use server timestamp)"
+        },
+        "cost_alerts": [
+          {
+            "threshold_usd": 50,
+            "email": "admin@example.com",
+            "triggered": false
+          },
+          {
+            "threshold_usd": 80,
+            "email": "admin@example.com",
+            "triggered": false
+          },
+          {
+            "threshold_usd": 95,
+            "email": "admin@example.com",
+            "triggered": false
+          }
+        ],
+        "default_user_quota": {
+          "daily_cost_limit_usd": 10,
+          "daily_request_limit": 2000,
+          "enabled": true
+        }
+      }
+    },
+    {
+      "step": 3,
+      "description": "创建 quota_logs collection 并添加一个初始文档",
+      "collection": "quota_logs",
+      "document_id": "auto-generated",
+      "data": {
+        "timestamp": "Timestamp (use server timestamp)",
+        "event_type": "initialization",
+        "user_id": "system",
+        "details": {
+          "message": "Quota system initialized"
+        }
+      }
+    },
+    {
+      "step": 4,
+      "description": "创建 admin_logs collection 并添加一个初始文档",
+      "collection": "admin_logs",
+      "document_id": "auto-generated",
+      "data": {
+        "action": "system_initialization",
+        "admin_id": "system",
+        "changes": {
+          "message": "OpenAI cost control system initialized"
+        },
+        "timestamp": "Timestamp (use server timestamp)"
+      }
+    },
+    {
+      "step": 5,
+      "description": "当有用户登录后，需要为每个用户添加 ai_quota 字段",
+      "collection": "users",
+      "document_id": "{userId}",
+      "data": {
+        "uid": "{userId}",
+        "email": "{user_email}",
+        "role": "user",
+        "createdAt": "Timestamp (use server timestamp)",
+        "ai_quota": {
+          "daily_cost_limit_usd": 10,
+          "daily_request_limit": 2000,
+          "enabled": true,
+          "today_usage": {
+            "request_count": 0,
+            "total_tokens": 0,
+            "cost_usd": 0,
+            "last_reset_at": "Timestamp (use server timestamp)"
+          },
+          "rate_limit": {
+            "per_minute": 10,
+            "per_hour": 100,
+            "recent_requests": []
+          }
+        }
+      }
+    }
+  ],
+  "important_notes": [
+    "对于 Timestamp 类型的字段，在 Firebase Console 中选择 'timestamp' 类型，并勾选 'Use server timestamp'",
+    "email 字段需要替换成实际的管理员邮箱地址",
+    "用户文档的创建可以等到有用户登录后再创建，或者直接通过 iOS 上传触发自动创建"
+  ]
+}

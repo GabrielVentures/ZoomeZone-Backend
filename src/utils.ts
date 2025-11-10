@@ -32,12 +32,15 @@ export async function isAdmin(userId: string): Promise<boolean> {
 // ==================== Token Cost Calculation ====================
 
 /**
- * Calculate token metrics and costs for GPT-4o Vision
- * Pricing: Input $5/1M tokens, Output $20/1M tokens
+ * Calculate token metrics and costs for GPT-4o-mini
+ * Pricing (as of 2025-01): Input $0.15/1M tokens, Output $0.60/1M tokens
  */
 export function calculateTokenMetrics(usage: OpenAIUsage): TokenMetrics {
-  const inputCost = (usage.prompt_tokens / 1000000) * 5.0;
-  const outputCost = (usage.completion_tokens / 1000000) * 20.0;
+  // GPT-4o-mini pricing (as of 2025-01)
+  // Input: $0.15 per 1M tokens
+  // Output: $0.60 per 1M tokens
+  const inputCost = (usage.prompt_tokens / 1000000) * 0.15;
+  const outputCost = (usage.completion_tokens / 1000000) * 0.60;
   const totalCost = inputCost + outputCost;
 
   return {
@@ -91,17 +94,19 @@ export async function markAsQuotaError(
 
 /**
  * Filter recent requests within the last minute
+ * Returns Timestamps (not numbers) for Firestore compatibility
  */
 export function filterRecentRequests(
   recentRequests: admin.firestore.Timestamp[],
   windowMs: number = 60 * 1000 // 1 minute
-): number[] {
+): admin.firestore.Timestamp[] {
   const now = Date.now();
   const cutoff = now - windowMs;
 
-  return recentRequests
-    .map((ts) => ts.toMillis ? ts.toMillis() : (ts as any))
-    .filter((ts) => ts > cutoff);
+  return recentRequests.filter((ts) => {
+    const millis = ts.toMillis ? ts.toMillis() : (ts as any);
+    return millis > cutoff;
+  });
 }
 
 // ==================== Circuit Breaker ====================

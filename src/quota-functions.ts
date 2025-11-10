@@ -14,6 +14,11 @@ import {
   UpdateGlobalAIConfigResponse,
 } from "./types";
 import { isAdmin, sanitizeUserQuota, sanitizeGlobalConfig } from "./utils";
+import {
+  logUserQuotaChange,
+  logGlobalAIConfigChange,
+  logCircuitBreakerToggle,
+} from "./audit-logger";
 
 // ==================== getAIQuotaStatus ====================
 
@@ -83,7 +88,10 @@ export const getAIQuotaStatus = functions.https.onCall(
 
       const remainingRequests = Math.max(0, dailyRequestLimit - todayUsage.request_count);
       const remainingCost = Math.max(0, dailyCostLimit - todayUsage.cost_usd);
-      const usagePercentage = ((todayUsage.cost_usd / dailyCostLimit) * 100).toFixed(2);
+      // Safe division - handle edge case where limit is 0
+      const usagePercentage = dailyCostLimit > 0 ?
+        ((todayUsage.cost_usd / dailyCostLimit) * 100).toFixed(2) :
+        "0.00";
 
       // 6. Return response
       return {
@@ -191,18 +199,34 @@ export const updateUserAIQuota = functions.https.onCall(
         updateData["ai_quota.enabled"] = quota.enabled;
       }
 
-      // 5. Update user quota
+      // 4.5. Validate that we have at least one field to update
+      if (Object.keys(updateData).length === 0) {
+        throw new functions.https.HttpsError(
+          "invalid-argument",
+          "At least one quota field must be provided for update"
+        );
+      }
+
+      // 5. Check user exists before update
       const userRef = admin.firestore().collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        throw new functions.https.HttpsError(
+          "not-found",
+          `User ${userId} not found`
+        );
+      }
+
+      // 6. Update user quota
       await userRef.update(updateData);
 
-      // 6. Log admin action
-      await admin.firestore().collection("admin_logs").add({
-        action: "update_user_quota",
-        admin_id: context.auth.uid,
-        target_user_id: userId,
-        changes: quota,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      // 7. Log audit activity using new audit logger
+      await logUserQuotaChange(
+        context.auth.uid,
+        context.auth.token.email || "unknown",
+        userId,
+        quota
+      );
 
       console.log(`✅ [AdminAction] User ${userId} quota updated by ${context.auth.uid}`);
 
@@ -303,13 +327,39 @@ export const updateGlobalAIConfig = functions.https.onCall(
         }
       }
 
+      // 4.5. Validate that we have at least one field to update
+      if (Object.keys(updateData).length === 0) {
+        throw new functions.https.HttpsError(
+          "invalid-argument",
+          "At least one configuration field must be provided for update"
+        );
+      }
+
       // 5. Update global config
       const configRef = admin.firestore()
         .collection("settings")
         .doc("ai_global_config");
       await configRef.update(updateData);
 
-      // 6. Log admin action
+      // 6. Log audit activity using new audit logger
+      // Log circuit breaker toggle if it changed
+      if (global_limits.circuit_breaker_enabled !== undefined) {
+        await logCircuitBreakerToggle(
+          context.auth.uid,
+          context.auth.token.email || "unknown",
+          global_limits.circuit_breaker_enabled,
+          global_limits.circuit_breaker_reason
+        );
+      }
+
+      // Log general config change
+      await logGlobalAIConfigChange(
+        context.auth.uid,
+        context.auth.token.email || "unknown",
+        global_limits
+      );
+
+      // Keep old admin_logs for backwards compatibility (optional)
       await admin.firestore().collection("admin_logs").add({
         action: "update_global_ai_config",
         admin_id: context.auth.uid,

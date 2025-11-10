@@ -242,7 +242,122 @@ export type AIProcessingErrorCode =
   | "QUOTA_DISABLED"
   | "GLOBAL_CIRCUIT_BREAKER"
   | "GLOBAL_QUOTA_EXCEEDED"
+  | "WEBADMIN_BUDGET_EXCEEDED"
   | "RATE_LIMIT_EXCEEDED"
   | "USER_NOT_FOUND"
   | "PROCESSING_ERROR"
   | "UNKNOWN_ERROR";
+
+// ==================== Activity Log Types ====================
+
+export enum ActivityAction {
+  // Budget Management
+  BUDGET_CONFIG_UPDATE = "BUDGET_CONFIG_UPDATE",
+  BUDGET_CONFIG_RESET = "BUDGET_CONFIG_RESET",
+
+  // Scan Records
+  SCAN_RECORD_CREATE = "SCAN_RECORD_CREATE",
+  SCAN_RECORD_DELETE = "SCAN_RECORD_DELETE",
+  SCAN_RECORD_BATCH_DELETE = "SCAN_RECORD_BATCH_DELETE",
+  SCAN_RECORD_RETRY = "SCAN_RECORD_RETRY",
+  SCAN_RECORD_BATCH_RETRY = "SCAN_RECORD_BATCH_RETRY",
+  SCAN_RECORD_EXPORT = "SCAN_RECORD_EXPORT",
+
+  // User Management
+  USER_QUOTA_UPDATE = "USER_QUOTA_UPDATE",
+  USER_ROLE_CHANGE = "USER_ROLE_CHANGE",
+  USER_CREATE = "USER_CREATE",
+  USER_DELETE = "USER_DELETE",
+
+  // Global AI Config
+  GLOBAL_AI_CONFIG_UPDATE = "GLOBAL_AI_CONFIG_UPDATE",
+  CIRCUIT_BREAKER_TOGGLE = "CIRCUIT_BREAKER_TOGGLE",
+
+  // System Events
+  DAILY_QUOTA_RESET = "DAILY_QUOTA_RESET",
+  COST_ALERT_TRIGGERED = "COST_ALERT_TRIGGERED",
+}
+
+export enum ResourceType {
+  BUDGET_CONFIG = "budget_config",
+  SCAN_RECORD = "scan_record",
+  USER = "user",
+  USER_QUOTA = "user_quota",
+  GLOBAL_AI_CONFIG = "global_ai_config",
+  SYSTEM = "system",
+}
+
+export enum ActivityLevel {
+  INFO = "INFO",
+  WARNING = "WARNING",
+  CRITICAL = "CRITICAL",
+}
+
+export interface ActivityLogChanges {
+  before: Record<string, any>;
+  after: Record<string, any>;
+  fields_changed: string[];
+}
+
+export interface ActivityLogMetadata {
+  success: boolean;
+  error?: string;
+  duration_ms?: number;
+  affected_count?: number;
+  [key: string]: any;
+}
+
+export interface ActivityLog {
+  timestamp: Timestamp;
+  action: ActivityAction | string;
+  resource_type: ResourceType | string;
+  resource_id: string;
+  user_id: string;
+  user_email: string;
+  user_role: string;
+  level: ActivityLevel;
+  description: string;
+  changes?: ActivityLogChanges;
+  ip_address?: string;
+  user_agent?: string;
+  metadata: ActivityLogMetadata;
+}
+
+// API Request/Response Types
+export interface LogActivityRequest {
+  action: ActivityAction | string;
+  resource_type: ResourceType | string;
+  resource_id: string;
+  level?: ActivityLevel;
+  description?: string;
+  changes?: ActivityLogChanges;
+  metadata?: Partial<ActivityLogMetadata>;
+}
+
+export interface GetAuditLogsRequest {
+  page?: number;
+  pageSize?: number;
+  filters?: {
+    user_id?: string;
+    resource_type?: string;
+    action?: string;
+    level?: string;
+    start_date?: string;
+    end_date?: string;
+  };
+  sort?: {
+    field: string;
+    order: "asc" | "desc";
+  };
+}
+
+export interface GetAuditLogsResponse {
+  success: boolean;
+  data: {
+    logs: ActivityLog[];
+    total: number;
+    page: number;
+    pageSize: number;
+    hasMore: boolean;
+  };
+}

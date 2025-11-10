@@ -385,101 +385,67 @@ If you cannot find a tag matching this barcode, set all fields to null and confi
 Extract the following information and return ONLY a valid JSON object with these exact fields:
 
 {
-  "price": "total price for the item/package (e.g., '$4.99', '$2.09', '$9.59')",
-  "unit_price": "price per unit if shown (e.g., '$0.42/oz', '$0.50/ct', '$0.15/oz')",
-  "size": "physical size/weight per unit (e.g., '20 oz', '1.76 oz', '500 ml')",
-  "unit": "measurement unit (e.g., 'oz', 'ct', 'ml', 'lb', 'PK')",
+  "price": "total price with EXACTLY 2 decimal places (e.g., '$4.99', '$2.09', '$0.05')",
+  "unit_price": "price per unit (e.g., '$0.42/oz', '$0.50 each', '$1.234/oz')",
+  "weight_or_count": "weight or count (e.g., '16 oz', '12 count', '1 lb')",
   "product_name": "exact product name from the tag",
   "brand": "brand name",
-  "category": "best guess category (Beverages, Snacks, Dairy, Health, Beauty, etc.)",
-  "label_date": "any date visible on label in YYYY-MM-DD format (tag print date, timestamp, etc.)",
-  "expiration_date": "expiration/best before date in YYYY-MM-DD format",
-  "barcode_full": "complete UPC/EAN barcode (12-13 digits)",
-  "barcode_shelf_tag": "short digits below barcode (4-8 digits, merchant's shelf tag ID)",
-  "promotion": "promotion text if any",
-  "confidence": "high, medium, or low"
+  "barcode_full": "complete UPC/EAN barcode if visible (usually 12-13 digits, e.g., '041196912982', '0112907973 29')",
+  "barcode_shelf_tag": "short digits printed BELOW the barcode image (usually 4-8 digits, e.g., '797329' or '912982')",
+  "promotion": "promotion text if any (e.g., 'Buy 2 Get 1 Free', 'Save $2')",
+  "confidence": "your confidence level: 'high', 'medium', or 'low'"
 }
-
-NOTE: Do NOT include "count" field. It will be calculated automatically from price and unit_price.
 
 CRITICAL INSTRUCTIONS:
 
-=== PRICING (MOST IMPORTANT) ===
-1. price: The MAIN PRICE customers pay (e.g., "$3.00", "$9.59", "$14.79")
-   - This is the total cost for the item or package
-   - MUST have EXACTLY 2 decimal places
-   - Examples: "$3.00", "$12.99", "$0.99"
+Price Formatting:
+1. Prices MUST have EXACTLY 2 decimal places (e.g., '$2.09' NOT '$2.0' or '$2')
+2. ALWAYS preserve ALL decimal digits EXACTLY as shown on the tag
+3. DO NOT round, truncate, or simplify prices
+4. Examples:
+   - If you see '$2.09' → output '$2.09' (NOT '$2.0' or '$2.1')
+   - If you see '$0.05' → output '$0.05' (NOT '$0' or '$.05')
+   - If you see '$12.99' → output '$12.99' (NOT '$13')
+5. Unit prices may have 2-3 decimal places (e.g., '$0.044/oz' is valid)
 
-2. unit_price: Price PER UNIT if shown separately
-   - Look for text like "per oz", "/oz", "each", "/ct"
-   - Format: "$X.XX/unit" or "$X.XXX/unit"
-   - Examples: "$0.15/oz", "$0.50/ct", "$7.19/oz"
-   - Set to null if not visible
-
-=== SIZE & UNIT (CRITICAL) ===
-
-SIZE Rules:
-- size: Physical measurement of EACH unit
-  * Weight/volume ONLY: "20 oz", "1.76 oz", "500 ml", "1.5 lb"
-  * Include the number and unit together
-  * If no size visible: set to null
-  * Examples: "20 oz", "500 ml", "1.5 lb"
-
-UNIT Rules:
-- unit: The measurement type (single word)
-  * Weight: "oz", "lb", "g", "kg"
-  * Volume: "ml", "l", "fl oz"
-  * Count: "ct", "count", "PK", "pk"
-  * Each: "ea", "each"
-  * Examples: "oz", "ml", "ct", "PK"
-
-EXAMPLES:
-- "20 oz bottle" → size: "20 oz", unit: "oz"
-- "4 PK" → size: null, unit: "PK"
-- "90 ct vitamins" → size: null, unit: "ct"
-- "4 PK 5.8 oz each" → size: "5.8 oz", unit: "PK"
-
-=== DATES (IMPORTANT - LOOK CAREFULLY) ===
-- label_date: Tag print date / timestamp on the label
-  * Look in ALL corners of the tag (top-left, top-right, bottom-left, bottom-right)
-  * Look near barcode, near price, or anywhere on the tag
-  * Common formats: "11/07/2025", "11/07/25", "2025-11-07", "Nov 7 2025"
-  * Convert to YYYY-MM-DD format (e.g., "2025-11-07")
-  * This is the date the shelf tag was PRINTED, not expiration
-  * Look carefully - this date is often small and in corners
-
-- expiration_date: Product expiration / best before date
-  * Usually says "EXP", "Best By", "Use By"
-  * Format: YYYY-MM-DD
-  * Different from label_date
-
-${barcodeValue ? `
-=== BARCODE MATCHING ===
-- Only extract from the tag with barcode "${barcodeValue}"
-- If multiple tags, ignore others
-- If no match, return all null with confidence "low"
+${barcodeValue ? `Barcode Matching:
+- Only extract information from the tag with barcode "${barcodeValue}"
+- If the image has multiple tags, ignore the others
+- If no matching tag is found, return all null values with confidence "low"
 ` : ""}
+Barcode Extraction (CRITICAL - TWO DIFFERENT FIELDS):
 
-=== BARCODE EXTRACTION (TWO DIFFERENT FIELDS) ===
-1. barcode_full: Complete UPC/EAN in the barcode IMAGE
-   - Usually 12-13 digits
-   - Examples: "041196912982", "014790311940"
+1. barcode_full (Complete UPC/EAN):
+   - Look for the LONG barcode encoded in the barcode IMAGE itself
+   - This is usually 12-13 digits (UPC-A: 12 digits, EAN-13: 13 digits)
+   - Extract if the barcode image is clear and readable
+   - Examples: "041196912982" (12 digits), "0112907973 29" (13 digits)
+   - If barcode image is unclear or not visible, set to null
 
-2. barcode_shelf_tag: SHORT digits BELOW barcode (CRITICAL)
-   - Typically 4-8 digits
-   - Often last digits of full barcode
-   - Examples: "912982", "311940", "159475"
-   - This is the merchant's shelf tag ID
+2. barcode_shelf_tag (Merchant Shelf Tag ID) - MOST IMPORTANT:
+   - Look for SHORT digits printed BELOW or very near the barcode image
+   - These are typically 4-8 digits (NOT always exactly 6)
+   - This is the merchant's internal shelf tag identifier
+   - It's usually the LAST several digits of the full barcode, but treat it as independent
+   - Common patterns:
+     * CVS: Often 6 digits (e.g., "797329" from full barcode "011290797329")
+     * Other merchants: May be 4, 5, 7, or 8 digits
+   - Look for digits that are:
+     * Directly below the barcode image
+     * In a slightly larger font than fine print
+     * Separated from other text/numbers
+   - Extract ALL digits in this location (do NOT truncate to 6)
+   - Examples: "797329", "91298 2", "45678"
+   - This field is CRITICAL for product lookup on merchant websites
+   - If no digits are visible below barcode, set to null
 
-=== OTHER RULES ===
-- Extract ALL visible prices
-- Be precise with units
-- All prices in US dollars ($)
-- Set confidence "low" if blurry
-- Promotion: Remove extra quotes
-- Category: Best guess from product type
-
-Return ONLY valid JSON, no markdown blocks.`,
+Other Important Rules:
+- Extract ALL visible prices (original price, sale price, etc.)
+- Be precise with units (oz, lb, kg, count, each, etc.)
+- ALL prices are in US dollars ($)
+- Set confidence to 'low' if image is blurry or text is unclear
+- If unsure about the last decimal digit, set confidence to 'medium'
+- If barcode is partially visible or unclear, still try to extract it (set confidence accordingly)`,
               },
               {
                 type: "image_url",
@@ -490,8 +456,8 @@ Return ONLY valid JSON, no markdown blocks.`,
             ],
           },
         ],
-        max_tokens: 600,
-        temperature: 0.1,
+        max_tokens: 500,
+        temperature: 0,
       });
 
       const aiContent = response.choices[0].message.content || "";
@@ -524,27 +490,13 @@ Return ONLY valid JSON, no markdown blocks.`,
         const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           aiResult = JSON.parse(jsonMatch[0]);
-
-          // CRITICAL: Remove count field from AI response if it exists
-          // We will calculate it ourselves from price / unit_price
-          if (aiResult.count !== undefined) {
-            console.log(`⚠️  [AI] AI returned count: ${aiResult.count}, will be recalculated`);
-            delete aiResult.count;
-          }
         } else {
           aiResult = {
             product_name: null,
             price: null,
             unit_price: null,
-            count: null,
-            size: null,
-            unit: null,
-            category: null,
-            label_date: null,
-            expiration_date: null,
+            weight_or_count: null,
             brand: null,
-            barcode_full: null,
-            barcode_shelf_tag: null,
             promotion: null,
             confidence: "low",
             description: aiContent,
@@ -556,15 +508,8 @@ Return ONLY valid JSON, no markdown blocks.`,
           product_name: null,
           price: null,
           unit_price: null,
-          count: null,
-          size: null,
-          unit: null,
-          category: null,
-          label_date: null,
-          expiration_date: null,
+          weight_or_count: null,
           brand: null,
-          barcode_full: null,
-          barcode_shelf_tag: null,
           promotion: null,
           confidence: "low",
           description: aiContent,
@@ -589,32 +534,9 @@ Return ONLY valid JSON, no markdown blocks.`,
         }
       }
 
-      // 6. Calculate count from price and unit_price
-      let calculatedCount: number | null = null;
-      if (aiResult.price && aiResult.unit_price) {
-        try {
-          // Extract numeric values from price strings
-          const priceValue = parseFloat(aiResult.price.replace(/[^0-9.]/g, ""));
-          const unitPriceValue = parseFloat(aiResult.unit_price.replace(/[^0-9.]/g, ""));
-
-          if (!isNaN(priceValue) && !isNaN(unitPriceValue) && unitPriceValue > 0) {
-            // Calculate count = total price / unit price
-            calculatedCount = Math.round(priceValue / unitPriceValue);
-            console.log(`✅ [AI] Calculated count: ${calculatedCount} (${priceValue} / ${unitPriceValue})`);
-          }
-        } catch (countError) {
-          console.warn("⚠️  [AI] Failed to calculate count:", countError);
-        }
-      }
-
-      // Set count to calculated value or default to null
-      aiResult.count = calculatedCount;
-
       // Log final extracted data
       console.log("📊 [AI] Extracted data:", {
         price: aiResult.price,
-        unit_price: aiResult.unit_price,
-        count: aiResult.count,
         product_name: aiResult.product_name,
         confidence: aiResult.confidence,
         barcode_match: barcodeValue ? "required" : "not required",
