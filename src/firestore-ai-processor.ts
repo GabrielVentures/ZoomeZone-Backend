@@ -60,9 +60,11 @@ export const processNewScanRecord = functions.firestore
       if (!userId || !imageURL) {
         console.log("❌ Missing required fields (User_ID or Image_URL)");
         await snapshot.ref.update({
-          ai_processed: true,
-          ai_status: "error",
-          ai_error: "Missing required fields",
+          ai_processed: false,
+          ai_status: "failed",
+          ai_processing_error: "VALIDATION_ERROR",
+          ai_processing_error_message: "Missing required fields (User_ID or Image_URL)",
+          ai_processing_error_timestamp: admin.firestore.FieldValue.serverTimestamp(),
         });
         return null;
       }
@@ -180,12 +182,27 @@ export const processNewScanRecord = functions.firestore
     } catch (error: any) {
       console.error("❌ [Error]:", error.message);
 
-      // Update scan record with error
+      // Determine error type
+      let errorCode = "PROCESSING_ERROR";
+      let friendlyMessage = "AI processing failed";
+
+      if (error.code === "insufficient_quota") {
+        errorCode = "QUOTA_EXCEEDED";
+        friendlyMessage = "OpenAI quota exceeded";
+      } else if (error.code === "rate_limit_exceeded") {
+        errorCode = "RATE_LIMIT";
+        friendlyMessage = "Rate limit exceeded";
+      }
+
+      // Update scan record with error (consistent with ai-processor.ts)
       await snapshot.ref.update({
-        ai_processed: true,
-        ai_status: "error",
-        ai_error: error.message,
-        ai_processed_at: admin.firestore.FieldValue.serverTimestamp(),
+        ai_processed: false,
+        ai_status: "failed",
+        ai_processing_error: errorCode,
+        ai_processing_error_message: error.message,
+        ai_processing_error_timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        ai_error_code: errorCode,
+        ai_error_friendly: friendlyMessage,
       });
 
       const duration = Date.now() - startTime;
@@ -193,4 +210,169 @@ export const processNewScanRecord = functions.firestore
 
       return { success: false, error: error.message };
     }
+  });
+
+/**
+ * Process scan record retry when ai_status changes to pending
+ * Triggered by: Firestore onUpdate event on scan_records collection
+ * This handles retry requests from the Web frontend
+ */
+export const processRetryRequest = functions.firestore
+  .document("scan_records/{scanId}")
+  .onUpdate(async (change, context) => {
+    const scanId = context.params.scanId;
+    const before = change.before.data();
+    const after = change.after.data();
+
+    // Only process if:
+    // 1. ai_status changed to "pending"
+    // 2. batch_retry flag is true (indicates this is a retry request)
+    // 3. ai_processed is false
+    if (
+      after.ai_status === "pending" &&
+      after.batch_retry === true &&
+      after.ai_processed === false &&
+      before.ai_status !== "pending" // Ensure this is a state change
+    ) {
+      console.log(`🔄 [ProcessRetry] Retry requested for: ${scanId}`);
+
+      // Reuse the same processing logic as onCreate
+      // by calling processNewScanRecord's logic
+      const snapshot = change.after;
+
+      try {
+        const startTime = Date.now();
+        const data = snapshot.data();
+
+        // Extract data
+        const userId = data.User_ID || data.userId;
+        const imageURL = data.Image_URL || data.imageUrl;
+
+        console.log(`👤 User: ${userId}`);
+        console.log(`🖼️  Image URL: ${imageURL}`);
+
+        // Validate required fields
+        if (!userId || !imageURL) {
+          console.log("❌ Missing required fields (User_ID or Image_URL)");
+          await snapshot.ref.update({
+            ai_processed: false,
+            ai_status: "failed",
+            ai_processing_error: "VALIDATION_ERROR",
+            ai_processing_error_message: "Missing required fields (User_ID or Image_URL)",
+            ai_processing_error_timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            batch_retry: false, // Clear retry flag
+          });
+          return null;
+        }
+
+        // Call OpenAI Vision API
+        console.log("🤖 Calling OpenAI Vision API...");
+        const openai = getOpenAIClient();
+
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Please analyze this shelf tag image and extract the following information in JSON format:
+{
+  "title": "Product name",
+  "price": "Price (number only, without currency symbol)",
+  "barcode": "Barcode number",
+  "merchant": "Store/merchant name",
+  "discount": "Discount info (if any)",
+  "unit": "Unit of measurement (if any)"
+}`,
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: imageURL,
+                  },
+                },
+              ],
+            },
+          ],
+          max_tokens: 500,
+        });
+
+        const content = response.choices[0]?.message?.content;
+        if (!content) {
+          throw new Error("No response from OpenAI");
+        }
+
+        // Parse JSON response
+        const aiResult = JSON.parse(content);
+
+        // Calculate cost
+        const inputTokens = response.usage?.prompt_tokens || 0;
+        const outputTokens = response.usage?.completion_tokens || 0;
+        const totalTokens = inputTokens + outputTokens;
+
+        const inputCostPer1k = 0.00015; // $0.150 / 1M tokens = $0.00015 / 1K
+        const outputCostPer1k = 0.0006; // $0.600 / 1M tokens = $0.0006 / 1K
+
+        const inputCost = (inputTokens / 1000) * inputCostPer1k;
+        const outputCost = (outputTokens / 1000) * outputCostPer1k;
+        const totalCost = inputCost + outputCost;
+
+        console.log(`💰 Cost: $${totalCost.toFixed(6)} (${totalTokens} tokens)`);
+
+        // Update scan record with results
+        await snapshot.ref.update({
+          ai_processed: true,
+          ai_status: "completed",
+          ai_result: aiResult,
+          ai_processing_completed_at: admin.firestore.FieldValue.serverTimestamp(),
+          ai_cost: {
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            inputCostUsd: parseFloat(inputCost.toFixed(6)),
+            outputCostUsd: parseFloat(outputCost.toFixed(6)),
+            totalCostUsd: parseFloat(totalCost.toFixed(6)),
+            model: "gpt-4o-mini",
+          },
+          batch_retry: false, // Clear retry flag after successful processing
+        });
+
+        const duration = Date.now() - startTime;
+        console.log(`✅ [ProcessRetry] Completed in ${duration}ms for ${scanId}`);
+
+        return { success: true };
+      } catch (error: any) {
+        console.error("❌ [ProcessRetry] Error:", error);
+
+        let errorCode = "UNKNOWN_ERROR";
+        let friendlyMessage = "An error occurred during AI processing";
+
+        if (error.code === "insufficient_quota") {
+          errorCode = "QUOTA_EXCEEDED";
+          friendlyMessage = "OpenAI quota exceeded";
+        } else if (error.code === "rate_limit_exceeded") {
+          errorCode = "RATE_LIMIT";
+          friendlyMessage = "Rate limit exceeded";
+        }
+
+        // Update scan record with error
+        await snapshot.ref.update({
+          ai_processed: false,
+          ai_status: "failed",
+          ai_processing_error: errorCode,
+          ai_processing_error_message: error.message,
+          ai_processing_error_timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          ai_error_code: errorCode,
+          ai_error_friendly: friendlyMessage,
+          batch_retry: false, // Clear retry flag
+        });
+
+        return { success: false, error: error.message };
+      }
+    }
+
+    // Not a retry request, skip
+    return null;
   });

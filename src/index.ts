@@ -23,6 +23,8 @@ export {
 // Export AI Processing Functions
 export { processImageUpload } from "./ai-processor";
 export { processNewScanRecord } from "./firestore-ai-processor";
+// DISABLED: processRetryRequest - causing conflicts with iOS uploads
+// export { processRetryRequest } from "./firestore-ai-processor";
 
 // Export Scheduled Tasks
 export {
@@ -33,3 +35,11 @@ export {
 
 // Export Audit Log Functions
 export { getAuditLogs, logActivity } from "./audit-functions";
+
+// Export Retry API Functions ⭐ NEW
+export {
+  retrySingleScan,
+  retryFailedScans,
+  getRetryBatchStatus,
+  getFailedScansCount,
+} from "./retry-api";

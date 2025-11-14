@@ -15,6 +15,9 @@ import {
   logQuotaCheck,
   logExecutionTime,
 } from "./utils";
+import { acquireTokens, estimateTokenUsage, getRateLimiterStatus } from "./rate-limiter";
+import { retryOpenAICall, isRateLimitError } from "./retry-handler";
+import { detectBatchUpload, calculateBatchDelay, updateBatchInfo } from "./batch-processor";
 
 // OpenAI client - initialized lazily to avoid errors during deployment
 let openaiClient: OpenAI | null = null;
@@ -338,9 +341,87 @@ export const processImageUpload = functions.storage
       console.log(`✅ [Layer 3] Rate limiting check passed (${recentRequests.length}/${rateLimit.per_minute} requests/min)`);
       logQuotaCheck(userId, scanId, true);
 
+      // ==================== LAYER 4: Global TPM Rate Limiting ⭐ NEW ====================
+
+      console.log("🔒 [Layer 4] Checking global TPM (Tokens Per Minute) rate limit...");
+
+      // Get rate limiter status
+      const rateLimiterStatus = await getRateLimiterStatus();
+      console.log(
+        `📊 [Layer 4] TPM Status: ${rateLimiterStatus.usagePercent.toFixed(1)}% used ` +
+          `(${rateLimiterStatus.minuteUsage}/180k tokens/min)`
+      );
+
+      // Detect batch upload
+      const batchInfo = await detectBatchUpload(userId, Date.now());
+      let processingDelay = 0;
+
+      if (batchInfo.isBatch) {
+        console.log(`📦 [Layer 4] Batch upload detected. Batch ID: ${batchInfo.batchId}, Position: ${batchInfo.position}`);
+
+        // Calculate intelligent delay for batch processing
+        processingDelay = calculateBatchDelay(batchInfo.position, 100); // Assume max 100 items
+
+        // Update scan record with batch info
+        await admin.firestore().collection("scan_records").doc(scanId).update({
+          batch_id: batchInfo.batchId,
+          batch_position: batchInfo.position,
+          ai_status: "queued",
+          queued_at: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        // Update batch info
+        await updateBatchInfo(batchInfo.batchId || "unknown", {
+          userId,
+          totalItems: batchInfo.position,
+        });
+
+        if (processingDelay > 0) {
+          console.log(`⏱️ [Layer 4] Batch processing delay: ${Math.ceil(processingDelay / 1000)}s`);
+          await new Promise((resolve) => setTimeout(resolve, processingDelay));
+        }
+      }
+
+      // ⚠️ Download image BEFORE estimating tokens
+      // 1. Download image
+      const bucket = admin.storage().bucket(object.bucket);
+      const file = bucket.file(filePath || "");
+      const [imageBuffer] = await file.download();
+      console.log(`📥 [Image] Downloaded (${imageBuffer.length} bytes)`);
+
+      // Estimate token usage based on image size
+      const estimatedTokens = estimateTokenUsage(imageBuffer.length);
+      console.log(`📊 [Layer 4] Estimated token usage: ${estimatedTokens} tokens`);
+
+      // Try to acquire tokens
+      const tokensAcquired = await acquireTokens(estimatedTokens);
+
+      if (!tokensAcquired) {
+        const message = `Global TPM rate limit reached. Please wait and retry. Current usage: ${rateLimiterStatus.usagePercent.toFixed(1)}%`;
+        console.log(`🔴 [Layer 4] ${message}`);
+        await markAsQuotaError(scanId, "RATE_LIMIT_EXCEEDED", message);
+        logQuotaCheck(userId, scanId, false, message);
+
+        // Update status for friendly UI display
+        await admin.firestore().collection("scan_records").doc(scanId).update({
+          ai_status: "rate_limited",
+          ai_error_code: "RATE_LIMIT",
+        });
+
+        return { success: false, error: "RATE_LIMIT_EXCEEDED" };
+      }
+
+      console.log("✅ [Layer 4] TPM rate limit check passed, tokens acquired");
+
       // ==================== AI Processing ====================
 
       console.log("🤖 [AI] Starting GPT-4o Vision processing...");
+
+      // Update status to processing
+      await admin.firestore().collection("scan_records").doc(scanId).update({
+        ai_status: "processing",
+        processing_started_at: admin.firestore.FieldValue.serverTimestamp(),
+      });
 
       // 0. Read barcode and merchant information from scan record
       const scanDocRef = admin.firestore()
@@ -356,26 +437,38 @@ export const processImageUpload = functions.storage
       console.log(`🔍 [AI] Barcode to match: ${barcodeValue || "none"}`);
       console.log(`🏪 [AI] Merchant: ${merchantName}`);
 
-      // 1. Download image
-      const bucket = admin.storage().bucket(object.bucket);
-      const file = bucket.file(filePath || "");
-      const [imageBuffer] = await file.download();
+      // 1. Convert image to base64 (already downloaded above)
       const base64Image = imageBuffer.toString("base64");
 
-      console.log(`📥 [AI] Image downloaded (${imageBuffer.length} bytes)`);
-
-      // 2. Call GPT-4o Vision API
+      // 2. Call GPT-4o Vision API with intelligent retry ⭐ NEW
       // Note: Using gpt-4o-mini due to quota limits on gpt-4o
       // gpt-4o-mini is ~95% cheaper and still provides excellent results
-      const response = await getOpenAIClient().chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "user",
-            content: [
+
+      // Track retry count for user-friendly UI
+      let retryCount = 0;
+
+      const response = await retryOpenAICall(
+        async () => {
+          if (retryCount > 0) {
+            // Update scan record to show retrying status
+            await admin.firestore().collection("scan_records").doc(scanId).update({
+              ai_status: "retrying",
+              ai_retry_count: retryCount,
+            });
+            console.log(`🔄 [AI] Retry attempt ${retryCount}/3 for scan ${scanId}`);
+          }
+
+          retryCount++;
+
+          return await getOpenAIClient().chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
               {
-                type: "text",
-                text: `You are analyzing a shelf price tag from a ${merchantName} store in the United States.
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: `You are analyzing a shelf price tag from a ${merchantName} store in the United States.
 
 ${barcodeValue ? `IMPORTANT: The user scanned this specific barcode: "${barcodeValue}"
 You MUST identify and extract information ONLY from the shelf tag that matches this barcode.
@@ -480,19 +573,23 @@ ${barcodeValue ? `
 - Category: Best guess from product type
 
 Return ONLY valid JSON, no markdown blocks.`,
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:image/jpeg;base64,${base64Image}`,
-                },
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: `data:image/jpeg;base64,${base64Image}`,
+                    },
+                  },
+                ],
               },
             ],
-          },
-        ],
-        max_tokens: 600,
-        temperature: 0.1,
-      });
+            max_tokens: 600,
+            temperature: 0.1,
+          });
+        },
+        scanId,
+        3 // Max 3 retries
+      );
 
       const aiContent = response.choices[0].message.content || "";
       console.log(`✅ [AI] GPT-4o response received: ${aiContent.substring(0, 100)}...`);
@@ -646,6 +743,9 @@ Return ONLY valid JSON, no markdown blocks.`,
         },
         ai_processed: true,
         ai_processing_error: null,
+        ai_status: "completed", // ⭐ NEW: Set status to completed
+        ai_error_code: null, // ⭐ NEW: Clear error code
+        ai_retry_count: retryCount - 1, // ⭐ NEW: Record final retry count
         ai_tokens: {
           input: tokenMetrics.input_tokens,
           output: tokenMetrics.output_tokens,
@@ -729,6 +829,22 @@ Return ONLY valid JSON, no markdown blocks.`,
     } catch (error) {
       console.error(`❌ [Error] Processing ${scanId}:`, error);
 
+      // ⭐ NEW: Determine error type for friendly UI display
+      const errorAny = error as any;
+      let errorCode = "UNKNOWN";
+      let friendlyMessage = "AI processing failed. Please try again.";
+
+      if (isRateLimitError(error)) {
+        errorCode = "RATE_LIMIT";
+        friendlyMessage = "Processing is temporarily busy. The system will automatically retry.";
+      } else if (errorAny?.code === "ENOTFOUND" || errorAny?.code === "ETIMEDOUT") {
+        errorCode = "NETWORK_ERROR";
+        friendlyMessage = "Network connection issue. Please check your connection and retry.";
+      } else if (errorAny?.message?.includes("quota") || errorAny?.message?.includes("QUOTA")) {
+        errorCode = "QUOTA_EXCEEDED";
+        friendlyMessage = "Daily processing quota reached. Will reset tomorrow.";
+      }
+
       // Record error to Firestore
       try {
         await admin.firestore()
@@ -739,6 +855,9 @@ Return ONLY valid JSON, no markdown blocks.`,
             ai_processing_error: "PROCESSING_ERROR",
             ai_processing_error_message: error instanceof Error ? error.message : String(error),
             ai_processing_error_timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            ai_status: "failed", // ⭐ NEW: Set status to failed
+            ai_error_code: errorCode, // ⭐ NEW: Set error code for UI
+            ai_error_friendly: friendlyMessage, // ⭐ NEW: Friendly error message
           });
 
         // Update global failed requests count
