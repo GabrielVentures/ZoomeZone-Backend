@@ -1,315 +1,167 @@
 # ShelfTagSnap Cloud Functions
 
-Firebase Cloud Functions for ShelfTagSnap - AI-powered shelf tag recognition with comprehensive cost control.
+Firebase Cloud Functions backend for ShelfTagSnap - AI-powered shelf tag recognition system.
+
+## 📋 Overview
+
+Cloud-based backend service for processing shelf tag images using OpenAI Vision API, with comprehensive cost control and intelligent retry mechanisms.
+
+## 🏗️ Architecture
+
+### Tech Stack
+- **Runtime**: Node.js 20
+- **Framework**: Firebase Cloud Functions (1st Gen)
+- **Database**: Cloud Firestore
+- **Storage**: Firebase Cloud Storage
+- **AI Service**: OpenAI GPT-4o-mini Vision API
+- **Language**: TypeScript
+
+### Core Modules
+
+**AI Processing**
+- `ai-processor.ts` - Main AI image processing with Storage triggers
+- `firestore-ai-processor.ts` - Firestore-triggered AI processing
+- `retry-api.ts` - Intelligent retry API system
+- `retry-handler.ts` - Exponential backoff retry logic
+- `batch-processor.ts` - Batch upload detection and processing
+- `rate-limiter.ts` - Request rate limiting
+
+**Quota & Cost Management**
+- `quota-functions.ts` - User and global quota management
+- `scheduled-tasks.ts` - Daily quota reset and cost reporting
+
+**Audit & Security**
+- `audit-functions.ts` - Activity logging API
+- `audit-logger.ts` - Centralized audit logging
+- `utils.ts` - Admin role verification
 
 ## 🚀 Features
 
-### **OpenAI Cost Control System (5-Layer Security)**
-1. **Global Circuit Breaker** - Emergency shutdown capability
-2. **Global Quota Check** - System-wide daily limits ($100/day)
-3. **User Quota Enabled Check** - Per-user AI processing toggle
-4. **User Quota Limit Check** - Per-user daily limits ($10/day, 2000 requests/day)
-5. **Rate Limiting** - Prevents abuse (10 requests/minute)
+### 1. AI Image Processing
+- **GPT-4o-mini Vision API** integration
+- Automatic product information extraction
+- Multi-format JSON response parsing
+- Cost tracking per request
 
-### **HTTP Callable Functions**
+### 2. Intelligent Retry System
+- **Manual Single Retry** - Users can retry failed records via web UI
+- **Batch Retry** - Admins can retry all failed records (up to 50 at once)
+- **Automatic Retry** - Exponential backoff for temporary failures (max 3 attempts)
+- **Parallel Processing** - Batch operations use Promise.allSettled
+
+### 3. Cost Control (5-Layer Security)
+- Global circuit breaker (emergency shutdown)
+- System-wide daily limits ($100/day)
+- Per-user quota management ($10/day, 100 requests/day)
+- Rate limiting (10 requests/minute)
+- Real-time cost tracking
+
+### 4. Batch Processing Optimization
+- Automatic batch detection (20+ uploads in 5 minutes)
+- Intelligent rate limiting for batch uploads
+- Prevents API overload
+
+### 5. Audit & Monitoring
+- Comprehensive activity logging
+- Daily cost reports (email alerts)
+- Hourly cost alert checking
+- Real-time usage statistics
+
+## 📡 Cloud Functions
+
+### HTTP Callable Functions
+- `retrySingleScan` - Retry a single failed scan
+- `retryFailedScans` - Batch retry all failed scans (admin)
+- `getRetryBatchStatus` - Get batch retry status
+- `getFailedScansCount` - Get failed scans count
 - `getAIQuotaStatus` - Get user quota status
-- `updateUserAIQuota` - Admin: Update user quotas
-- `updateGlobalAIConfig` - Admin: Control global settings and circuit breaker
+- `updateUserAIQuota` - Update user quotas (admin)
+- `updateGlobalAIConfig` - Update global config (admin)
+- `getAuditLogs` - Get audit logs (admin)
+- `logActivity` - Log user activity
 
-### **Storage-Triggered Functions**
-- `processImageUpload` - AI image processing with GPT-4o Vision
+### Firestore Triggers
+- `processNewScanRecord` - Process new scan records (onCreate)
 
-### **Scheduled Functions**
-- `resetDailyQuotas` - Daily quota reset at 00:00 UTC+8
-- `sendDailyCostReport` - Daily cost report at 23:50 UTC+8
-- `checkCostAlerts` - Hourly cost alert checking
+### Storage Triggers
+- `processImageUpload` - Process uploaded images (onFinalize)
 
-## 📦 Prerequisites
-
-- Node.js 18+
-- Firebase CLI: `npm install -g firebase-tools`
-- OpenAI API Key
-- Firebase project with:
-  - Firestore Database
-  - Cloud Storage
-  - Cloud Functions
-  - Authentication
-
-## 🛠️ Setup
-
-### 1. Install Dependencies
-
-```bash
-npm install
-```
-
-### 2. Firebase Configuration
-
-```bash
-# Login to Firebase
-firebase login
-
-# Set Firebase project
-firebase use <your-project-id>
-```
-
-### 3. OpenAI API Key Configuration
-
-```bash
-# Set OpenAI API key as environment variable
-firebase functions:config:set openai.key="sk-your-openai-api-key"
-
-# Verify configuration
-firebase functions:config:get
-```
-
-### 4. Initialize Firestore Data Structure
-
-Run the initialization script to create required collections and documents:
-
-```bash
-# Run initialization script (create this separately)
-node scripts/init-firestore.js
-```
-
-Or manually create in Firebase Console:
-- Collection: `settings`, Document: `ai_global_config`
-- Add `ai_quota` field to all `users` documents
-
-See `docs/FIRESTORE_STRUCTURE.md` for detailed schema.
-
-## 🏗️ Development
-
-### Build
-
-```bash
-npm run build
-```
-
-### Local Testing
-
-```bash
-# Start Firebase emulators
-npm run serve
-
-# Test functions locally
-firebase functions:shell
-```
-
-### Linting
-
-```bash
-# Check linting
-npm run lint
-
-# Fix linting issues
-npm run lint:fix
-```
+### Scheduled Functions (Cloud Scheduler)
+- `resetDailyQuotas` - Daily quota reset (00:00 UTC+8)
+- `sendDailyCostReport` - Daily cost report (23:50 UTC+8)
+- `checkCostAlerts` - Hourly cost checking (every hour)
 
 ## 🚢 Deployment
 
-### Deploy All Functions
+### Prerequisites
+- Firebase CLI installed (`npm install -g firebase-tools`)
+- Firebase project configured
+- Node.js 20+ installed
 
+### Deploy All Functions
 ```bash
+npm run build
 npm run deploy
 ```
 
-### Deploy Specific Function
-
+### Deploy Specific Functions
 ```bash
-firebase deploy --only functions:processImageUpload
-firebase deploy --only functions:getAIQuotaStatus
-firebase deploy --only functions:resetDailyQuotas
+# Deploy retry API functions
+firebase deploy --only functions:retrySingleScan,retryFailedScans
+
+# Deploy AI processing functions
+firebase deploy --only functions:processNewScanRecord,processImageUpload
+
+# Deploy scheduled tasks
+firebase deploy --only functions:resetDailyQuotas,sendDailyCostReport
 ```
 
 ### View Logs
-
 ```bash
 # Real-time logs
 firebase functions:log
 
-# Specific function logs
-firebase functions:log --only processImageUpload
+# Function-specific logs
+firebase functions:log --only retrySingleScan
+
+# Search logs
+firebase functions:log 2>&1 | grep "RetryAPI"
 ```
 
-## 📊 Firestore Data Structure
+## 📊 Project Structure
 
-### users/{userId}
-
-```typescript
-{
-  uid: string,
-  email: string,
-  role: "user" | "admin",
-
-  ai_quota: {
-    daily_cost_limit_usd: 10.0,
-    daily_request_limit: 2000,
-    enabled: true,
-
-    today_usage: {
-      request_count: 0,
-      total_tokens: 0,
-      cost_usd: 0.0,
-      last_request_at: Timestamp,
-      last_reset_at: Timestamp
-    },
-
-    rate_limit: {
-      per_minute: 10,
-      per_hour: 100,
-      recent_requests: [Timestamp...]
-    }
-  }
-}
+```
+src/
+├── ai-processor.ts              # Main AI processing (Storage trigger)
+├── firestore-ai-processor.ts   # Firestore-triggered processing
+├── retry-api.ts                 # Retry API system (619 lines)
+├── retry-handler.ts             # Exponential backoff logic
+├── batch-processor.ts           # Batch detection & management
+├── rate-limiter.ts              # Rate limiting utilities
+├── quota-functions.ts           # Quota management APIs
+├── scheduled-tasks.ts           # Cron jobs
+├── audit-functions.ts           # Audit APIs
+├── audit-logger.ts              # Centralized logging
+├── utils.ts                     # Shared utilities
+├── types.ts                     # TypeScript types
+└── index.ts                     # Function exports
 ```
 
-### settings/ai_global_config
+## 🔧 Development
 
-```typescript
-{
-  global_limits: {
-    daily_cost_limit_usd: 100.0,
-    daily_request_limit: 20000,
-    circuit_breaker_enabled: false,
-    circuit_breaker_reason: null
-  },
-
-  today_stats: {
-    total_requests: 0,
-    total_tokens: 0,
-    total_cost_usd: 0.0,
-    failed_requests: 0,
-    quota_exceeded_count: 0,
-    last_reset_at: Timestamp
-  },
-
-  cost_alerts: [
-    { threshold_usd: 50, email: "admin@example.com", triggered: false },
-    { threshold_usd: 80, email: "admin@example.com", triggered: false },
-    { threshold_usd: 95, email: "admin@example.com", triggered: false }
-  ],
-
-  default_user_quota: {
-    daily_cost_limit_usd: 10.0,
-    daily_request_limit: 2000,
-    enabled: true
-  }
-}
-```
-
-### scan_records/{scanId}
-
-```typescript
-{
-  User_ID: string,
-  Username: string,
-  Timestamp: Timestamp,
-  Merchant: string,
-
-  ai_processed: boolean,
-  ai_processing_error?: "QUOTA_EXCEEDED_COST_LIMIT" | "RATE_LIMIT_EXCEEDED" | ...,
-  ai_processing_error_message?: string,
-
-  ai_tokens?: {
-    input: number,
-    output: number,
-    total: number
-  },
-
-  ai_cost?: {
-    input_cost_usd: number,
-    output_cost_usd: number,
-    total_cost_usd: number,
-    currency: "USD",
-    pricing_model: "gpt-4-vision-preview"
-  },
-
-  AI_Result?: {
-    product_name: string | null,
-    price: string | null,
-    brand: string | null,
-    category: string | null,
-    description: string | null,
-    confidence: number
-  }
-}
-```
-
-## 🔒 Security
-
-### Error Codes
-
-- `QUOTA_EXCEEDED_COST_LIMIT` - User exceeded daily cost limit
-- `QUOTA_EXCEEDED_DAILY_LIMIT` - User exceeded daily request limit
-- `GLOBAL_CIRCUIT_BREAKER` - Global circuit breaker enabled
-- `GLOBAL_QUOTA_EXCEEDED` - Global quota exceeded
-- `QUOTA_DISABLED` - AI processing disabled for user
-- `RATE_LIMIT_EXCEEDED` - Too many requests in short time
-- `USER_NOT_FOUND` - User document not found
-
-### Admin Functions
-
-Only users with `role: "admin"` can call:
-- `updateUserAIQuota`
-- `updateGlobalAIConfig`
-
-### Rate Limiting
-
-- Default: 10 requests/minute per user
-- Configurable per user via `ai_quota.rate_limit`
-
-## 💰 Cost Estimation
-
-### GPT-4o Vision Pricing
-- Input: $5.00 / 1M tokens
-- Output: $20.00 / 1M tokens
-
-### Typical Usage
-- Single image analysis: ~2000 tokens (~$0.005)
-- 100 scans/day: ~$0.50/day
-- 1000 scans/day: ~$5.00/day
-
-### Default Limits
-- User: $10/day (≈2000 scans)
-- Global: $100/day (≈20000 scans)
-
-## 📝 Development Workflow
-
-1. **Make Changes** - Edit source files in `src/`
-2. **Build** - `npm run build`
-3. **Test Locally** - `npm run serve`
-4. **Lint** - `npm run lint:fix`
-5. **Deploy** - `npm run deploy`
-6. **Monitor** - `npm run logs`
-
-## 🐛 Troubleshooting
-
-### Function Not Triggering
-
+### Build
 ```bash
-# Check function deployment status
-firebase functions:list
-
-# Check logs for errors
-firebase functions:log --limit 50
+npm run build
 ```
 
-### OpenAI API Errors
-
+### Lint
 ```bash
-# Verify API key configuration
-firebase functions:config:get
-
-# Check OpenAI API usage at https://platform.openai.com/usage
+npm run lint
 ```
 
-### Quota Issues
-
+### Local Testing
 ```bash
-# Check Firestore data
-# Verify settings/ai_global_config exists
-# Verify users have ai_quota field
+firebase emulators:start
 ```
 
 ## 📚 Resources
@@ -318,16 +170,8 @@ firebase functions:config:get
 - [OpenAI API Documentation](https://platform.openai.com/docs)
 - [TypeScript Documentation](https://www.typescriptlang.org/docs/)
 
-## 📄 License
-
-UNLICENSED - Private project for ShelfTagSnap
-
-## 👥 Authors
-
-ShelfTagSnap Development Team
-
 ---
 
-**Version**: 1.0.0
-**Last Updated**: 2025-11-03
-**Node Version**: 18
+**Version**: 2.1.0
+**Last Updated**: 2025-11-14
+**Node Version**: 20
